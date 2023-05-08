@@ -1,0 +1,28 @@
+{
+  "primary_interval": "30s",
+  "max_workers": 3,
+  "entries": [
+    {
+      "name": "ffmpeg.mp3.to.mp4.converter",
+      "interval": "2m",
+      "command": "ffmpeg",
+      "args": [
+        "-f",
+        "lavfi",
+        "-i",
+        "color=c=black:s=640x480:r=5",
+        "-i",
+        "{SOURCE_FILE}",
+        "-crf",
+        "0",
+        "-c:a",
+        "copy",
+        "-shortest",
+        "{DEST_FILE}"
+      ],
+      "folder": "~/Desktop/watchman-folder/",
+      "from_ext": ".mp3",
+      "to_ext": ".mp4"
+    }
+  ]
+}
