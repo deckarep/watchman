@@ -1,12 +1,39 @@
+/*
+Open Source Initiative OSI - The MIT License (MIT):Licensing
+
+The MIT License (MIT)
+Copyright (c) 2023 Ralph Caraveo (deckarep@gmail.com)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/fsnotify/fsnotify"
 	"github.com/gen2brain/beeep"
 	"github.com/google/uuid"
+	"github.com/stephen-fox/launchctlutil"
 	"log"
 	"os"
 	"os/exec"
@@ -17,6 +44,23 @@ import (
 	"sync"
 	"syscall"
 	"time"
+)
+
+const (
+	finalExeName = "app"
+
+	applicationSupportPath = "~/Library/Application Support/"
+	launchDLabelTemplate   = "com.%s.scripts.go.watchman.svc"
+)
+
+var (
+	launchDLabel = func() string {
+		usr, err := user.Current()
+		if err != nil {
+			log.Fatal("failed to get the current user with err: ", err)
+		}
+		return fmt.Sprintf(launchDLabelTemplate, usr.Username)
+	}()
 )
 
 type Schedule struct {
@@ -36,11 +80,18 @@ type Entry struct {
 	ToExt   string `json:"to_ext"`
 }
 
-var schedule = func() Schedule {
+var (
+	scheduleExists = false
+)
+
+var schedule = func() *Schedule {
+	absWorkingDirPath := filepath.Join(getHomePath(applicationSupportPath), launchDLabel)
+
 	// 0. Load configuration
-	b, err := os.ReadFile("config.json")
+	b, err := os.ReadFile(filepath.Join(absWorkingDirPath, "config.json"))
 	if err != nil {
-		log.Fatal("failed to read configuration file!")
+		log.Println("WARN: configuration file does not exist: ", err.Error())
+		return nil
 	}
 
 	var mySchedule Schedule
@@ -48,10 +99,12 @@ var schedule = func() Schedule {
 	if err != nil {
 		log.Fatal("failed to unmarshal config file", err)
 	}
-	return mySchedule
+
+	scheduleExists = true
+	return &mySchedule
 }()
 
-type WorkItem struct {
+type workItem struct {
 	OriginalFile string
 	TempFile     string
 	DestFile     string
@@ -60,14 +113,17 @@ type WorkItem struct {
 }
 
 var sigs = make(chan os.Signal, 1)
-var dispatchChannel = make(chan WorkItem)
+var dispatchChannel = make(chan workItem)
 var wg sync.WaitGroup
 var processingSet = mapset.NewSet[string]()
 
 func worker() {
 	for wrk := range dispatchChannel {
-		//fmt.Println(wrk.Command, strings.Join(wrk.Args, " "))
-		_, err := exec.Command(wrk.Command, wrk.Args...).Output()
+		// We're willing to wait up to 3 minutes.
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute*3)
+		defer cancel()
+
+		_, err := exec.CommandContext(ctx, wrk.Command, wrk.Args...).Output()
 		if err != nil {
 			switch e := err.(type) {
 			case *exec.Error:
@@ -78,7 +134,11 @@ func worker() {
 		}
 
 		// Simulate time.
-		time.Sleep(time.Second * 5)
+		select {
+		case <-time.After(time.Millisecond * 10):
+		case <-ctx.Done():
+			fmt.Println("context deadline fired, skipping sleep")
+		}
 
 		// Cleanup
 		processingSet.Remove(wrk.OriginalFile)
@@ -96,7 +156,11 @@ func worker() {
 }
 
 func getHomePath(path string) string {
-	usr, _ := user.Current()
+	usr, err := user.Current()
+	if err != nil {
+		log.Fatal("failed to get the current user with err: ", err)
+	}
+
 	dir := usr.HomeDir
 
 	if path == "~" {
@@ -118,7 +182,203 @@ func doNotification(body string) {
 	}
 }
 
+func copyFile(srcFile, destFile string) error {
+	input, err := os.ReadFile(srcFile)
+	if err != nil {
+		return err
+	}
+
+	err = os.WriteFile(destFile, input, 0644)
+	if err != nil {
+
+		return err
+	}
+	return nil
+}
+
+// TODO: we shouldn't have to do this wrapper nonsense when this upstream tool is updated.
+type wrappedConfig struct {
+	kv  map[string]string
+	cfg launchctlutil.Configuration
+}
+
+func newWrappedConfig(cfg launchctlutil.Configuration) *wrappedConfig {
+	return &wrappedConfig{
+		cfg: cfg,
+		kv:  make(map[string]string),
+	}
+}
+
+func (wc *wrappedConfig) AddKeyValue(key, value string) {
+	wc.kv[key] = value
+}
+
+func (wc *wrappedConfig) GetLabel() string {
+	return wc.cfg.GetLabel()
+}
+
+func (wc *wrappedConfig) GetContents() string {
+	contents := wc.cfg.GetContents()
+	if len(wc.kv) > 0 {
+		var injectedKeyValues []string
+		for k, v := range wc.kv {
+			injectedKeyValues = append(injectedKeyValues, strings.Repeat(" ", 8)+"<key>"+k+"</key>")
+			injectedKeyValues = append(injectedKeyValues, strings.Repeat(" ", 8)+"<string>"+v+"</string>")
+		}
+		contents = strings.Replace(contents, "        <true/>", "        <true/>\n"+strings.Join(injectedKeyValues, "\n"), -1)
+	}
+	fmt.Println(contents)
+	return contents
+}
+
+func (wc *wrappedConfig) GetFilePath() (configFilePath string, err error) {
+	return wc.cfg.GetFilePath()
+}
+
+func (wc *wrappedConfig) GetKind() launchctlutil.Kind {
+	return wc.cfg.GetKind()
+}
+
+func (wc *wrappedConfig) IsInstalled() (bool, error) {
+	return wc.cfg.IsInstalled()
+}
+
+func cfgWrapperHack(cfg launchctlutil.Configuration) *wrappedConfig {
+	wrapped := newWrappedConfig(cfg)
+	return wrapped
+}
+
+func install() {
+	expandedPath := getHomePath("~/Library/Application Support/" + launchDLabel)
+
+	// 1. Create dir
+	err := os.MkdirAll(expandedPath, 0750)
+	if err != nil || !os.IsExist(err) {
+		log.Fatal("failed to create Application Support default directory")
+	}
+
+	// 2. Move self process to dir
+	runningProcessPath, err := os.Executable()
+	if err != nil {
+		log.Fatal("failed to get exec path with err: ", err)
+	}
+
+	err = copyFile(runningProcessPath, filepath.Join(expandedPath, finalExeName))
+	if err != nil {
+		log.Fatal("failed to copy file to destination directory: ", err)
+	}
+
+	// 3. Move config.json to application support directory
+	err = copyFile("config.json", filepath.Join(expandedPath, "config.json"))
+	if err != nil {
+		log.Fatal("failed to move over config.json file with err: ", err.Error())
+	}
+
+	// 4. Set permission to executable.
+	err = os.Chmod(filepath.Join(expandedPath, finalExeName), 0700)
+	if err != nil {
+		log.Fatal("failed to change permission of file to executable with err: ", err.Error())
+	}
+
+	// 5. Create and install launchd script
+	config, err := launchctlutil.NewConfigurationBuilder().
+		SetKind(launchctlutil.UserAgent).
+		SetLabel(launchDLabel).
+		SetRunAtLoad(true).
+		SetCommand(filepath.Join(expandedPath, finalExeName)).
+		//AddArgument("Hello world!").
+		SetLogParentPath("/tmp").
+		Build()
+	if err != nil {
+		log.Fatal(err.Error())
+	}
+
+	// 5. Apply hack for unsupported key/value pairs (or until github.com/stephen-fox/launchtlutil gets their act together)
+	cfg := cfgWrapperHack(config)
+	//cfg.AddKeyValue("WorkingDirectory", expandedPath)
+	//cfg.AddKeyValue("RootDirectory", "...")
+
+	// 4. Install the launchd config
+	err = launchctlutil.Install(cfg)
+	if err != nil {
+		log.Fatal(err.Error())
+	}
+}
+
+func remove() error {
+	//absWorkingDirPath := filepath.Join(getHomePath(applicationSupportPath), launchDLabel)
+	err := launchctlutil.Remove(launchDLabel, launchctlutil.UserAgent)
+	if err != nil {
+		log.Println("WARN: could not remove service with err: ", err)
+	}
+
+	err = launchctlutil.RemoveService(launchDLabel)
+	if err != nil {
+		log.Println("WARN: could not stop service with err: ", err)
+		return nil
+	}
+
+	fmt.Println("service successfully stopped.")
+
+	return nil
+}
+
+func status() {
+	details, err := launchctlutil.CurrentStatus(launchDLabel)
+	if err != nil {
+		log.Fatal("failed to get the current launchctl status with err: ", err.Error())
+	}
+
+	// TODO: clean up how this prints out.
+
+	fmt.Printf("Command.status: %q ", details.Status)
+
+	if details.GotPid() {
+		fmt.Printf(", Current PID: %d", details.Pid)
+	}
+
+	if details.GotLastExitStatus() {
+		fmt.Printf(", Last exit status: %d", details.LastExitStatus)
+	}
+
+	fmt.Println()
+}
+
 func main() {
+	log.Println("Starting the watchmen app!")
+	wd, err := os.Getwd()
+	if err != nil {
+		log.Fatal("failed to get CWD with err:", err)
+	}
+
+	log.Printf("Current working directory: %q\n", wd)
+
+	if len(os.Args) > 1 {
+		if os.Args[1] == "status" {
+			status()
+			return
+		} else if os.Args[1] == "install" {
+			fmt.Println("installing to correct location...")
+			install()
+			return
+		} else if os.Args[1] == "remove" {
+			fmt.Println("removing this service...")
+			if err := remove(); err != nil {
+				log.Fatal("failed to remove service with err: ", err.Error())
+			}
+			return
+		} else if os.Args[1] == "uninstall" {
+			// TODO: uninstall should completely remove all traces of service and data in Application Support folder.
+			// TODO: Disambiguate between the difference between remove and uninstall.
+			return
+		}
+	}
+
+	// If no commands were specified just run.
+	run()
+}
+
+func run() {
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -205,7 +465,7 @@ func handleEvent(eventFile string) error {
 						}
 					}
 
-					wi := WorkItem{
+					wi := workItem{
 						OriginalFile: fullFilePath,
 						TempFile:     tempFilePath,
 						DestFile:     newFilePath,

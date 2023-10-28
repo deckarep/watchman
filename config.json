@@ -5,7 +5,7 @@
     {
       "name": "ffmpeg.mp3.to.mp4.converter",
       "interval": "2m",
-      "command": "ffmpeg",
+      "command": "/usr/local/bin/ffmpeg",
       "args": [
         "-f",
         "lavfi",
