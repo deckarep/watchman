@@ -47,7 +47,7 @@ import (
 )
 
 const (
-	finalExeName = "app"
+	finalExeName = "watchman"
 
 	applicationSupportPath = "~/Library/Application Support/"
 	launchDLabelTemplate   = "com.%s.scripts.go.watchman.svc"
@@ -248,13 +248,13 @@ func cfgWrapperHack(cfg launchctlutil.Configuration) *wrappedConfig {
 	return wrapped
 }
 
-func install() {
+func install(configFile string) {
 	expandedPath := getHomePath("~/Library/Application Support/" + launchDLabel)
 
 	// 1. Create dir
 	err := os.MkdirAll(expandedPath, 0750)
-	if err != nil || !os.IsExist(err) {
-		log.Fatal("failed to create Application Support default directory")
+	if err != nil && !os.IsExist(err) {
+		log.Fatalf("failed to create directory at: %q\n", expandedPath)
 	}
 
 	// 2. Move self process to dir
@@ -269,7 +269,7 @@ func install() {
 	}
 
 	// 3. Move config.json to application support directory
-	err = copyFile("config.json", filepath.Join(expandedPath, "config.json"))
+	err = copyFile(configFile, filepath.Join(expandedPath, "config.json"))
 	if err != nil {
 		log.Fatal("failed to move over config.json file with err: ", err.Error())
 	}
@@ -302,6 +302,14 @@ func install() {
 	err = launchctlutil.Install(cfg)
 	if err != nil {
 		log.Fatal(err.Error())
+	}
+}
+
+func start() {
+	log.Printf("starting service: %q\n", launchDLabel)
+	err := launchctlutil.Start(launchDLabel, launchctlutil.UserAgent)
+	if err != nil {
+		log.Fatal("failed to start service with err: ", err)
 	}
 }
 
@@ -354,12 +362,23 @@ func main() {
 	log.Printf("Current working directory: %q\n", wd)
 
 	if len(os.Args) > 1 {
-		if os.Args[1] == "status" {
+		if os.Args[1] == "install" {
+			if len(os.Args) < 3 {
+				log.Fatal("must provide a config .json file to install")
+			}
+
+			fmt.Println("installing to correct location...")
+			install(os.Args[2])
+			return
+		} else if os.Args[1] == "status" {
 			status()
 			return
-		} else if os.Args[1] == "install" {
-			fmt.Println("installing to correct location...")
-			install()
+		} else if os.Args[1] == "start" {
+			start()
+			return
+		} else if os.Args[1] == "local" {
+			// Runs the service locally from the command prompt for development purposes.
+			run()
 			return
 		} else if os.Args[1] == "remove" {
 			fmt.Println("removing this service...")
@@ -373,9 +392,6 @@ func main() {
 			return
 		}
 	}
-
-	// If no commands were specified just run.
-	run()
 }
 
 func run() {
