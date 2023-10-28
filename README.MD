@@ -44,6 +44,8 @@ workflow. Perhaps a tool such as `ffmpeg` or a tool that can convert `.doc` file
 
 ### Usage
 
+#### Installation
+
 First, install Watchman using the usual Go toolchain commands.
 ```sh
 go get github.com/deckarep/watchman
@@ -67,13 +69,26 @@ Additionally, the service should be running at this point:
 ```sh
 ./Watchman status
 
-# Output
+# Output:
 # Command.status: "running" , Current PID: 60098, Last exit status: 0
 ```
 
 To stop or remove the service:
 ```sh
 # TODO
+```
+
+#### Troubleshooting:
+
+Watchman can run locally while you are trying to work out your config file and conversion binaries. Just invoke it with
+no arguments.
+```sh
+./Watchman
+```
+
+Tailing the service logs:
+```
+tail -f /tmp/com.{USER}.scripts.go.watchman.svc.log
 ```
 
 ### Ignore below, this tool will now manage the creation of launch configs.
