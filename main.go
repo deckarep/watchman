@@ -144,7 +144,7 @@ func worker() {
 		processingSet.Remove(wrk.OriginalFile)
 		err = os.Rename(wrk.TempFile, wrk.DestFile)
 		if err != nil {
-			log.Fatal("Failed to move file: ", wrk.TempFile)
+			log.Fatalf("Failed to move file: %q with err: %q\n", wrk.TempFile, err)
 		}
 
 		// Show completed notification...
@@ -376,10 +376,6 @@ func main() {
 		} else if os.Args[1] == "start" {
 			start()
 			return
-		} else if os.Args[1] == "local" {
-			// Runs the service locally from the command prompt for development purposes.
-			run()
-			return
 		} else if os.Args[1] == "remove" {
 			fmt.Println("removing this service...")
 			if err := remove(); err != nil {
@@ -392,6 +388,9 @@ func main() {
 			return
 		}
 	}
+
+	// In default mode, just run.
+	run()
 }
 
 func run() {
