@@ -29,12 +29,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/charmbracelet/log"
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/fsnotify/fsnotify"
 	"github.com/gen2brain/beeep"
 	"github.com/google/uuid"
 	"github.com/stephen-fox/launchctlutil"
-	"log"
+
 	"os"
 	"os/exec"
 	"os/signal"
@@ -90,7 +91,7 @@ var schedule = func() *Schedule {
 	// 0. Load configuration
 	b, err := os.ReadFile(filepath.Join(absWorkingDirPath, "config.json"))
 	if err != nil {
-		log.Println("WARN: configuration file does not exist: ", err.Error())
+		log.Debug("WARN: configuration file does not exist: ", err.Error())
 		return nil
 	}
 
@@ -129,7 +130,7 @@ func worker() {
 			case *exec.Error:
 				log.Fatal("failed to execute this command!:", err)
 			case *exec.ExitError:
-				fmt.Println("command exit rc =", e.ExitCode())
+				log.Info("command exit rc =", e.ExitCode())
 			}
 		}
 
@@ -137,7 +138,7 @@ func worker() {
 		select {
 		case <-time.After(time.Millisecond * 10):
 		case <-ctx.Done():
-			fmt.Println("context deadline fired, skipping sleep")
+			log.Info("context deadline fired, skipping sleep")
 		}
 
 		// Cleanup
@@ -151,7 +152,7 @@ func worker() {
 		doNotification("File Completed: " + filepath.Base(wrk.DestFile) + " ✅")
 	}
 
-	fmt.Println("worker shutting down...")
+	log.Info("worker shutting down...")
 	wg.Done()
 }
 
@@ -178,7 +179,7 @@ func getHomePath(path string) string {
 func doNotification(body string) {
 	err := beeep.Notify("Watchman Notification", body, "assets/information.png")
 	if err != nil {
-		log.Println("Failed to show notification with err: ", err.Error())
+		log.Debug("Failed to show notification with err: ", err.Error())
 	}
 }
 
@@ -227,7 +228,7 @@ func (wc *wrappedConfig) GetContents() string {
 		}
 		contents = strings.Replace(contents, "        <true/>", "        <true/>\n"+strings.Join(injectedKeyValues, "\n"), -1)
 	}
-	//fmt.Println(contents)
+	//log.Info(contents)
 	return contents
 }
 
@@ -306,7 +307,7 @@ func install(configFile string) {
 }
 
 func start() {
-	log.Printf("starting service: %q\n", launchDLabel)
+	log.Infof("starting service: %q\n", launchDLabel)
 	err := launchctlutil.Start(launchDLabel, launchctlutil.UserAgent)
 	if err != nil {
 		log.Fatal("failed to start service with err: ", err)
@@ -317,16 +318,16 @@ func remove() error {
 	//absWorkingDirPath := filepath.Join(getHomePath(applicationSupportPath), launchDLabel)
 	err := launchctlutil.Remove(launchDLabel, launchctlutil.UserAgent)
 	if err != nil {
-		log.Println("WARN: could not remove service with err: ", err)
+		log.Debug("WARN: could not remove service with err: ", err)
 	}
 
 	err = launchctlutil.RemoveService(launchDLabel)
 	if err != nil {
-		log.Println("WARN: could not stop service with err: ", err)
+		log.Debug("WARN: could not stop service with err: ", err)
 		return nil
 	}
 
-	fmt.Println("service successfully stopped.")
+	log.Info("service successfully stopped.")
 
 	return nil
 }
@@ -348,18 +349,16 @@ func status() {
 	if details.GotLastExitStatus() {
 		fmt.Printf(", Last exit status: %d", details.LastExitStatus)
 	}
-
-	fmt.Println()
 }
 
 func main() {
-	log.Println("Starting the watchmen app!")
+	log.Debug("Starting the watchmen app!")
 	wd, err := os.Getwd()
 	if err != nil {
 		log.Fatal("failed to get CWD with err:", err)
 	}
 
-	log.Printf("Current working directory: %q\n", wd)
+	log.Infof("Current working directory: %q", wd)
 
 	if len(os.Args) > 1 {
 		if os.Args[1] == "install" {
@@ -367,7 +366,7 @@ func main() {
 				log.Fatal("must provide a config .json file to install")
 			}
 
-			fmt.Println("installing to correct location...")
+			log.Info("installing to correct location...")
 			install(os.Args[2])
 			return
 		} else if os.Args[1] == "status" {
@@ -377,7 +376,7 @@ func main() {
 			start()
 			return
 		} else if os.Args[1] == "remove" {
-			fmt.Println("removing this service...")
+			log.Info("removing this service...")
 			if err := remove(); err != nil {
 				log.Fatal("failed to remove service with err: ", err.Error())
 			}
@@ -417,7 +416,7 @@ func run() {
 				if evt.Has(fsnotify.Create) {
 					err := handleEvent(evt.Name)
 					if err != nil {
-						log.Println("Create handleEvent failed with err: ", err.Error())
+						log.Debug("Create handleEvent failed with err: ", err.Error())
 					}
 				}
 
@@ -425,7 +424,7 @@ func run() {
 				if !ok {
 					return
 				}
-				log.Println("watcher error: ", err)
+				log.Debug("watcher error: ", err)
 			}
 		}
 	}()
@@ -448,7 +447,7 @@ func instantiateWorkers() {
 		wg.Add(1)
 		go worker()
 	}
-	log.Printf("Created %d workers...\n", schedule.MaxWorkers)
+	log.Infof("Created %d workers...", schedule.MaxWorkers)
 }
 
 func handleEvent(eventFile string) error {
@@ -502,14 +501,14 @@ func handleEvent(eventFile string) error {
 }
 
 func waitShutdown() {
-	fmt.Println("waiting on signal")
+	log.Info("waiting on signal")
 	<-sigs
 
-	fmt.Println("closing dispatch channel")
+	log.Info("closing dispatch channel")
 	close(dispatchChannel)
-	fmt.Println("Signal received...")
+	log.Info("Signal received...")
 
 	wg.Wait()
-	fmt.Println("Workers shutdown...")
-	fmt.Println("Exiting.")
+	log.Info("Workers shutdown...")
+	log.Info("Exiting.")
 }
