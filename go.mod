@@ -1,8 +1,9 @@
-module Watchman
+module watchman
 
 go 1.20
 
 require (
+	github.com/charmbracelet/log v0.2.5
 	github.com/deckarep/golang-set/v2 v2.3.1
 	github.com/fsnotify/fsnotify v1.7.0
 	github.com/gen2brain/beeep v0.0.0-20230907135156-1a38885a97fc
@@ -13,7 +14,6 @@ require (
 require (
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/charmbracelet/lipgloss v0.8.0 // indirect
-	github.com/charmbracelet/log v0.2.5 // indirect
 	github.com/go-logfmt/logfmt v0.6.0 // indirect
 	github.com/go-toast/toast v0.0.0-20190211030409-01e6764cf0a4 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect

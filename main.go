@@ -47,6 +47,10 @@ import (
 	"time"
 )
 
+func init() {
+	log.SetReportCaller(true)
+}
+
 const (
 	finalExeName = "watchman"
 
@@ -152,7 +156,7 @@ func worker() {
 		doNotification("File Completed: " + filepath.Base(wrk.DestFile) + " ✅")
 	}
 
-	log.Info("worker shutting down...")
+	log.Debug("worker shutting down...")
 	wg.Done()
 }
 
@@ -339,16 +343,18 @@ func status() {
 	}
 
 	// TODO: clean up how this prints out.
-
-	fmt.Printf("Command.status: %q ", details.Status)
+	var pairs []string
+	pairs = append(pairs, "status", string(details.Status))
 
 	if details.GotPid() {
-		fmt.Printf(", Current PID: %d", details.Pid)
+		pairs = append(pairs, "pid", string(details.Pid))
 	}
 
 	if details.GotLastExitStatus() {
-		fmt.Printf(", Last exit status: %d", details.LastExitStatus)
+		pairs = append(pairs, "exitcode", string(details.LastExitStatus))
 	}
+
+	log.Info("Command.status:", "foo", 1, "bar", 2, "baz", 3)
 }
 
 func main() {
@@ -447,7 +453,7 @@ func instantiateWorkers() {
 		wg.Add(1)
 		go worker()
 	}
-	log.Infof("Created %d workers...", schedule.MaxWorkers)
+	log.Infof("created %d workers...", schedule.MaxWorkers)
 }
 
 func handleEvent(eventFile string) error {
@@ -504,11 +510,11 @@ func waitShutdown() {
 	log.Info("waiting on signal")
 	<-sigs
 
-	log.Info("closing dispatch channel")
+	log.Debug("closing dispatch channel")
 	close(dispatchChannel)
-	log.Info("Signal received...")
+	log.Debug("Signal received...")
 
 	wg.Wait()
-	log.Info("Workers shutdown...")
+	log.Debug("all workers shutdown...")
 	log.Info("Exiting.")
 }
