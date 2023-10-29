@@ -227,7 +227,7 @@ func (wc *wrappedConfig) GetContents() string {
 		}
 		contents = strings.Replace(contents, "        <true/>", "        <true/>\n"+strings.Join(injectedKeyValues, "\n"), -1)
 	}
-	fmt.Println(contents)
+	//fmt.Println(contents)
 	return contents
 }
 
